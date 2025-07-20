@@ -5,7 +5,7 @@ import {
   executeDraftAction,
   executeResetAction,
   isRoundOver,
-  canBandAcceptTiles, prepareNextRound
+  prepareNextRound
 } from '../utils/gameLogic';
 import { calculateAIMove, type AIDifficulty } from '../utils/aiLogic';
 import Factory from './Factory';
@@ -50,6 +50,16 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
 
     // Handle reset glazier action
     if (bandColumn === 0) {
+      // Check if glazier is already at the first available position
+      const currentBoard = gameState.currentPlayer === 'human' ? gameState.humanBoard : gameState.aiBoard;
+      const accessibleBands = currentBoard.patternBands.filter(band => !band.isRemoved);
+      const firstAvailablePosition = accessibleBands.length > 0 ? Math.min(...accessibleBands.map(band => band.column)) : 1;
+
+      if (currentBoard.glazierPosition === firstAvailablePosition) {
+        setGameMessage('Glazier is already at the first available position. Cannot reset.');
+        return;
+      }
+
       const newState = executeResetAction(gameState);
       setGameState({ ...newState, currentPlayer: 'ai' });
       setSelectedSource(null);
@@ -63,7 +73,6 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
     if (selectedSource && selectedColor) {
       const humanBoard = gameState.humanBoard;
       const targetBand = humanBoard.patternBands.find(b => b.column === bandColumn);
-      
       if (!targetBand) return;
 
       // Get tiles from source
@@ -76,25 +85,32 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
         tiles = gameState.centerTiles.filter(tile => tile.color === selectedColor);
       }
 
-      // Check if band can accept tiles
-      if (!canBandAcceptTiles(targetBand, selectedColor, tiles.length)) {
-        setGameMessage('Cannot place tiles in this band. Choose another band or reset glazier.');
+      // Calculate how many tiles can fit in the band
+      const availableSpace = targetBand.maxCapacity - targetBand.tiles.length;
+      const overflowTiles = tiles.slice(availableSpace);
+
+      // Check if band is full and floor line is also full
+      const floorLineCapacity = 7; // Azul standard penalty row size
+      const currentFloorLine = humanBoard.brokenGlass || 0;
+      const canPlaceInBand = !targetBand.isRemoved && !targetBand.isCompleted && (targetBand.tiles.length < targetBand.maxCapacity);
+      const canPlaceInFloor = (currentFloorLine + overflowTiles.length) <= floorLineCapacity;
+
+      if (!canPlaceInBand && !canPlaceInFloor) {
+        setGameMessage('Cannot place tiles in this band or floor line. Choose another band or reset glazier.');
         return;
       }
 
-      // Execute draft action
+      // Execute draft action (pass both band and overflow tiles)
       const draftAction: DraftAction = {
         type: 'draft',
         source: selectedSource,
         color: selectedColor,
         tiles,
-        targetBand: bandColumn
+        targetBand: bandColumn,
       };
 
       const newState = executeDraftAction(gameState, draftAction);
       setGameState({ ...newState, currentPlayer: 'ai' });
-      
-      // Clear selections
       setSelectedSource(null);
       setSelectedColor(null);
       setSelectedBand(null);
@@ -172,6 +188,7 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
 
   const isHumanTurn = gameState.currentPlayer === 'human' && !isProcessingAI;
 
+  // noinspection SqlNoDataSourceInspection
   return (
     <div className="min-h-screen text-foreground p-4">
       {/* Game header */}
