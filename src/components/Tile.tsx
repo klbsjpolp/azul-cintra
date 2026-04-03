@@ -16,7 +16,6 @@ const getTileColorClass = (color: TileColor): string => {
     case 'red': return 'glass-tile-red';
     case 'yellow': return 'glass-tile-yellow';
     case 'green': return 'glass-tile-green';
-    case 'purple': return 'glass-tile-purple';
     case 'orange': return 'glass-tile-orange';
     default: return 'glass-tile';
   }

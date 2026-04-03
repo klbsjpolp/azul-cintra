@@ -1,6 +1,7 @@
 import React from 'react';
-import type {PatternBand as PatternBandType} from '../types/game';
+import type {PatternBand as PatternBandType, TileColor} from '../types/game';
 import { COLUMN_VALUES } from '../types/game';
+import { getActivePattern, resolveBandSlots } from '../utils/gameLogic';
 import Tile from './Tile';
 
 interface PatternBandProps {
@@ -23,10 +24,19 @@ export const PatternBand: React.FC<PatternBandProps> = ({
   playerType = 'human'
 }) => {
   const columnValue = COLUMN_VALUES[band.column - 1];
-  const filledSlots = band.tiles.length;
-  const emptySlots = band.maxCapacity - filledSlots;
+  const activePattern = getActivePattern(band);
+  const resolvedSlots = resolveBandSlots(band);
+  const filledSlots = resolvedSlots.filter(Boolean).length;
 
   const glazierClass = playerType === 'human' ? 'glazier-human' : 'glazier-ai';
+  const glazedTile = band.glazedTile;
+  const patternSlotClass: Record<TileColor, string> = {
+    blue: 'border-glass-blue bg-glass-blue/30 text-blue-100',
+    red: 'border-glass-red bg-glass-red/30 text-red-100',
+    yellow: 'border-glass-yellow bg-glass-yellow/30 text-yellow-100',
+    green: 'border-glass-green bg-glass-green/30 text-green-100',
+    orange: 'border-glass-orange bg-glass-orange/30 text-orange-100'
+  };
 
   return (
     <div
@@ -38,7 +48,7 @@ export const PatternBand: React.FC<PatternBandProps> = ({
         ${band.isRemoved ? 'opacity-30' : ''}
         transition-all duration-300
         relative
-        min-h-[60px]
+        min-h-15
         flex items-center
         justify-between
         px-3
@@ -67,62 +77,103 @@ export const PatternBand: React.FC<PatternBandProps> = ({
 
       {/* Tile slots */}
       <div className="flex-1 flex items-center justify-center gap-1">
-        {/* Filled slots */}
-        {band.tiles.map((tile, index) => (
-          <div
-            key={tile.id}
-            style={{ animationDelay: `${index * 0.1}s` }}
-            className="animate-float"
-          >
-            <Tile
-              tile={tile}
-              size="small"
-            />
-          </div>
-        ))}
+        {activePattern.map((space, index) => {
+          const tile = resolvedSlots[index];
 
-        {/* Empty slots */}
-        {Array.from({ length: emptySlots }).map((_, index) => (
-          <div
-            key={`empty-${index}`}
-            className={`
-              w-6 h-6 rounded-lg border-2 border-dashed
-              ${isAccessible ? 'border-gold-accent' : 'border-gray-600'}
-              transition-all duration-300
-              flex items-center justify-center
-            `}
-          >
-            {isAccessible && isSelected && (
-              <div className="w-2 h-2 bg-gold-accent rounded-full animate-pulse" />
-            )}
-          </div>
-        ))}
+          if (tile) {
+            const slotPatternClass = space === 'joker' ? 'border-gray-300 bg-gray-500/20' : patternSlotClass[space];
+            return (
+              <div
+                key={tile.id}
+                style={{ animationDelay: `${index * 0.1}s` }}
+                className={`
+                  relative w-6 h-6 rounded-lg border shadow-inner
+                  ${slotPatternClass}
+                  animate-float
+                `}
+              >
+                <Tile tile={tile} size="small" className="relative z-10" />
+              </div>
+            );
+          }
+
+          if (space === 'joker') {
+            return (
+              <div
+                key={`pattern-joker-${band.id}-${index}`}
+                className="relative w-6 h-6 rounded-lg border border-gray-300 bg-gray-500/30 flex items-center justify-center shadow-inner"
+              >
+                <span className="text-[9px] text-gray-100 font-bold">J</span>
+                {isAccessible && isSelected && index === filledSlots && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-2 h-2 bg-gold-accent rounded-full animate-pulse" />
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={`pattern-${band.id}-${index}`}
+              className={`
+                relative w-6 h-6 rounded-lg border flex items-center justify-center
+                shadow-inner
+                ${patternSlotClass[space]}
+                ${band.isRemoved ? 'grayscale opacity-60' : ''}
+              `}
+            >
+              <span className="text-[9px] font-bold uppercase opacity-95">
+                {space.charAt(0)}
+              </span>
+              <div
+                className={`
+                  absolute inset-0 rounded-lg border
+                  ${patternSlotClass[space]}
+                `}
+              />
+              {isAccessible && isSelected && index === filledSlots && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-2 h-2 bg-gold-accent rounded-full animate-pulse" />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Band status indicators */}
       <div className="flex flex-col items-center ml-3">
+        {(glazedTile || band.secondGlazedTile) && (
+          <div className="flex flex-col gap-1 mb-1">
+            {glazedTile && (
+              <Tile
+                tile={glazedTile}
+                size="small"
+                className="ring-1 ring-gold-accent/70"
+              />
+            )}
+            {band.secondGlazedTile && (
+              <Tile
+                tile={band.secondGlazedTile}
+                size="small"
+                className="ring-1 ring-gold-accent/70"
+              />
+            )}
+          </div>
+        )}
+
         {/* Completion status */}
-        {band.isCompleted && !band.isRemoved && (
+        {!band.isRemoved ? (
           <div className={`
             w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold
-            ${band.isFirstSide ? 
-              'bg-green-500 border-green-500 text-foreground' : 
-              'bg-blue-500 border-blue-500 text-foreground'
-            }
+            ${band.windowTiles.length > 0 ? 'bg-green-500 border-green-500 text-foreground' : 'border-gray-600 text-gray-400'}
           `}>
-            {band.isFirstSide ? '1' : '2'}
+            {band.windowTiles.length}/2
           </div>
-        )}
-
-        {band.isRemoved && (
+        ) : (
           <div className="w-6 h-6 rounded-full bg-red-500 border-2 border-red-500 flex items-center justify-center text-xs font-bold text-foreground">
-            ✗
-          </div>
-        )}
-
-        {!band.isCompleted && !band.isRemoved && (
-          <div className="w-6 h-6 rounded-full border-2 border-gray-600 flex items-center justify-center text-xs text-gray-400">
-            {filledSlots}/{band.maxCapacity}
+            2/2
           </div>
         )}
       </div>

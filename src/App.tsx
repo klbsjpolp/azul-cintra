@@ -1,7 +1,7 @@
 import Game from './components/Game';
 
 function App() {
-  return <Game difficulty="medium" />;
+  return <Game />;
 }
 
 export default App;

@@ -1,6 +1,7 @@
 import {
   type Tile,
   type TileColor,
+  type PatternSpace,
   type Factory,
   type PatternBand,
   type PlayerBoard,
@@ -15,8 +16,25 @@ import {
   BROKEN_GLASS_RESET_PENALTY
 } from '../types/game';
 
-const TILE_COLORS: TileColor[] = ['blue', 'red', 'yellow', 'green', 'purple', 'orange'];
-const TILES_PER_COLOR = 22;
+const TILE_COLORS: TileColor[] = ['blue', 'red', 'yellow', 'green', 'orange'];
+const TILES_PER_COLOR = 20;
+
+interface PatternStripDefinition {
+  front: PatternSpace[];
+  back: PatternSpace[];
+}
+
+// 8 strips, one of them containing 2 jokers on one side (must start face-down).
+const PATTERN_STRIP_DECK: PatternStripDefinition[] = [
+  { front: ['blue', 'red', 'yellow', 'green', 'orange'], back: ['orange', 'green', 'yellow', 'red', 'blue'] },
+  { front: ['red', 'yellow', 'green', 'orange', 'blue'], back: ['blue', 'orange', 'green', 'yellow', 'red'] },
+  { front: ['yellow', 'green', 'orange', 'blue', 'red'], back: ['red', 'blue', 'orange', 'green', 'yellow'] },
+  { front: ['green', 'orange', 'blue', 'red', 'yellow'], back: ['yellow', 'red', 'blue', 'orange', 'green'] },
+  { front: ['orange', 'blue', 'red', 'yellow', 'green'], back: ['green', 'yellow', 'red', 'blue', 'orange'] },
+  { front: ['blue', 'yellow', 'orange', 'red', 'green'], back: ['green', 'red', 'orange', 'yellow', 'blue'] },
+  { front: ['yellow', 'red', 'blue', 'green', 'orange'], back: ['orange', 'green', 'blue', 'red', 'yellow'] },
+  { front: ['red', 'green', 'orange', 'blue', 'yellow'], back: ['joker', 'blue', 'orange', 'joker', 'green'] }
+];
 
 // Generate a unique tile ID
 let tileIdCounter = 0;
@@ -48,16 +66,29 @@ export const shuffleArray = <T>(array: T[]): T[] => {
 
 // Create initial pattern bands for a player
 export const createPatternBands = (): PatternBand[] => {
-  return Array.from({ length: 8 }, (_, index) => ({
-    id: index + 1,
-    column: index + 1,
-    tiles: [],
-    maxCapacity: 5,
-    isCompleted: false,
-    isFirstSide: true,
-    isRemoved: false,
-    glazedTile: null
-  }));
+  const shuffledDeck = shuffleArray(PATTERN_STRIP_DECK);
+
+  return Array.from({ length: 8 }, (_, index) => {
+    const strip = shuffledDeck[index];
+    const jokerSideIndex = strip.front.filter(space => space === 'joker').length >= 2 ? 0 : 1;
+    const initialSide = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
+    const activeSide = initialSide === jokerSideIndex ? ((1 - initialSide) as 0 | 1) : initialSide;
+
+    return {
+      id: index + 1,
+      column: index + 1,
+      tiles: [],
+      patternSides: [strip.front, strip.back],
+      activeSide,
+      maxCapacity: 5,
+      isCompleted: false,
+      isFirstSide: true,
+      isRemoved: false,
+      glazedTile: null,
+      secondGlazedTile: null,
+      windowTiles: []
+    };
+  });
 };
 
 // Create initial player board
@@ -116,18 +147,43 @@ export const getAccessibleBands = (board: PlayerBoard): PatternBand[] => {
   );
 };
 
+export const getActivePattern = (band: PatternBand): PatternSpace[] => band.patternSides[band.activeSide];
+
+export const resolveBandSlots = (band: PatternBand): (Tile | null)[] => {
+  const pattern = getActivePattern(band);
+  const slots: (Tile | null)[] = Array.from({ length: band.maxCapacity }, () => null);
+
+  for (const tile of band.tiles) {
+    const slotIndex = pattern.findIndex((space, index) =>
+      slots[index] === null && (space === tile.color || space === 'joker')
+    );
+
+    if (slotIndex >= 0) {
+      slots[slotIndex] = tile;
+    }
+  }
+
+  return slots;
+};
+
+export const getAvailableMatchingSpaces = (band: PatternBand, color: TileColor): number => {
+  if (band.isRemoved || band.tiles.length >= band.maxCapacity) return 0;
+
+  const pattern = getActivePattern(band);
+  const slots = resolveBandSlots(band);
+
+  return pattern.reduce((count, space, index) => {
+    if (slots[index] === null && (space === color || space === 'joker')) {
+      return count + 1;
+    }
+    return count;
+  }, 0);
+};
+
 // Check if a band can accept tiles of a specific color
 export const canBandAcceptTiles = (band: PatternBand, color: TileColor, count: number): boolean => {
-  if (band.isRemoved || band.isCompleted) return false;
-
-  // If band is empty, it can accept any color
-  if (band.tiles.length === 0) {
-    return band.tiles.length + count <= band.maxCapacity;
-  }
-  
-  // If band has tiles, new tiles must be same color
-  const existingColor = band.tiles[0].color;
-  return existingColor === color && band.tiles.length + count <= band.maxCapacity;
+  if (count <= 0) return false;
+  return getAvailableMatchingSpaces(band, color) > 0;
 };
 
 // Calculate score for completing a band
@@ -142,7 +198,7 @@ export const calculateBandScore = (
   let rightColumnsBonus = 0;
   for (let col = bandColumn + 1; col <= 8; col++) {
     const rightBand = board.patternBands.find(b => b.column === col);
-    if (rightBand && rightBand.isCompleted && !rightBand.isRemoved) {
+    if (rightBand && rightBand.windowTiles.length > 0) {
       rightColumnsBonus += COLUMN_VALUES[col - 1];
     }
   }
@@ -200,9 +256,17 @@ export const executeDraftAction = (gameState: GameState, action: DraftAction): G
   // Place tiles on target band
   const targetBand = currentBoard.patternBands.find(b => b.column === action.targetBand);
   if (targetBand && selectedTiles.length > 0) {
-    const availableCapacity = targetBand.maxCapacity - targetBand.tiles.length;
-    const tilesToPlace = selectedTiles.slice(0, availableCapacity);
-    const excessTiles = selectedTiles.slice(availableCapacity);
+    const accessibleBands = getAccessibleBands(currentBoard);
+    const hasReachableMatch = accessibleBands.some(band => getAvailableMatchingSpaces(band, action.color) > 0);
+    const availableMatchingSpaces = getAvailableMatchingSpaces(targetBand, action.color);
+
+    if (availableMatchingSpaces === 0 && hasReachableMatch) {
+      throw new Error('Invalid strip choice: a reachable strip can accept this color.');
+    }
+
+    const placeCount = Math.min(selectedTiles.length, availableMatchingSpaces);
+    const tilesToPlace = selectedTiles.slice(0, placeCount);
+    const excessTiles = selectedTiles.slice(placeCount);
 
     targetBand.tiles.push(...tilesToPlace);
 
@@ -237,6 +301,7 @@ export const executeDraftAction = (gameState: GameState, action: DraftAction): G
 const completeBand = (gameState: GameState, board: PlayerBoard, band: PatternBand): void => {
   // Choose one tile to glaze (keep the first tile as glazed)
   const tileToGlaze = band.tiles[0];
+  if (!tileToGlaze) return;
   const tilesToDiscard = band.tiles.slice(1);
   
   // Calculate and add score
@@ -245,21 +310,20 @@ const completeBand = (gameState: GameState, board: PlayerBoard, band: PatternBan
   
   // Handle band completion based on side
   if (band.isFirstSide) {
-    // First completion - flip to second side, keep glazed tile
+    // First completion: move one pane to the top window, then flip the strip.
     band.isFirstSide = false;
     band.isCompleted = true;
     band.glazedTile = tileToGlaze;
+    band.windowTiles.push(tileToGlaze);
+    band.activeSide = band.activeSide === 0 ? 1 : 0;
     band.tiles = [];
   } else {
-    // Second completion - remove band entirely
+    // Second completion: move one pane to the bottom window, then remove strip.
     band.isRemoved = true;
+    band.isCompleted = true;
+    band.secondGlazedTile = tileToGlaze;
+    band.windowTiles.push(tileToGlaze);
     band.tiles = [];
-    band.glazedTile = null;
-
-    // Add the glazed tile to discard as well
-    if (tileToGlaze) {
-      tilesToDiscard.push(tileToGlaze);
-    }
   }
   
   // Move discarded tiles to tower
@@ -345,8 +409,8 @@ export const calculateEndGameBonus = (board: PlayerBoard): EndGameBonus => {
     const band2 = board.patternBands.find(b => b.column === col2);
     
     let completedCount = 0;
-    if (band1 && band1.isCompleted && !band1.isRemoved) completedCount++;
-    if (band2 && band2.isCompleted && !band2.isRemoved) completedCount++;
+    if (band1 && band1.windowTiles.length > 0) completedCount++;
+    if (band2 && band2.windowTiles.length > 0) completedCount++;
 
     if (completedCount === 2) {
       pairBonus += ORNAMENT_BONUS[2];

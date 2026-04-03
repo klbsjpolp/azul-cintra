@@ -1,4 +1,5 @@
-export type TileColor = 'blue' | 'red' | 'yellow' | 'green' | 'purple' | 'orange';
+export type TileColor = 'blue' | 'red' | 'yellow' | 'green' | 'orange';
+export type PatternSpace = TileColor | 'joker';
 
 export interface Tile {
   id: string;
@@ -14,11 +15,15 @@ export interface PatternBand {
   id: number;
   column: number;
   tiles: Tile[];
+  patternSides: [PatternSpace[], PatternSpace[]];
+  activeSide: 0 | 1;
   maxCapacity: number;
-  isCompleted: boolean;
-  isFirstSide: boolean; // true for first completion, false for second
+  isCompleted: boolean; // true once at least one pane was moved to the palace window
+  isFirstSide: boolean; // true until first strip completion, then false
   isRemoved: boolean; // true when band is removed after second completion
-  glazedTile: Tile | null; // The tile that was glazed when completed
+  glazedTile: Tile | null; // top frame pane
+  secondGlazedTile: Tile | null; // bottom frame pane
+  windowTiles: Tile[]; // panes moved to the palace window (0-2)
 }
 
 export interface PlayerBoard {
@@ -78,7 +83,7 @@ export interface AIOption {
 }
 
 // Scoring constants for board A (based on README specifications)
-export const COLUMN_VALUES = [4, 3, 3, 2, 2, 1, 1, 2]; // columns 1-8
+export const COLUMN_VALUES = [1, 2, 3, 4, 2, 2, 1, 1]; // windows 1-8
 
 export const ORNAMENT_BONUS = {
   2: 3, // 2 columns completed in pair

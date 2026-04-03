@@ -4,19 +4,18 @@ import {
   initializeGame,
   executeDraftAction,
   executeResetAction,
+  getAccessibleBands,
+  getAvailableMatchingSpaces,
   isRoundOver,
   prepareNextRound
 } from '../utils/gameLogic';
-import { calculateAIMove, type AIDifficulty } from '../utils/aiLogic';
+import { calculateAIMove } from '../utils/aiLogic';
 import Factory from './Factory';
 import Center from './Center';
 import PlayerBoard from './PlayerBoard';
 
-interface GameProps {
-  difficulty?: AIDifficulty;
-}
 
-export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
+export const Game: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => initializeGame());
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [selectedColor, setSelectedColor] = useState<TileColor | null>(null);
@@ -85,18 +84,12 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
         tiles = gameState.centerTiles.filter(tile => tile.color === selectedColor);
       }
 
-      // Calculate how many tiles can fit in the band
-      const availableSpace = targetBand.maxCapacity - targetBand.tiles.length;
-      const overflowTiles = tiles.slice(availableSpace);
+      const reachableBands = getAccessibleBands(humanBoard);
+      const hasReachableMatch = reachableBands.some(band => getAvailableMatchingSpaces(band, selectedColor) > 0);
+      const availableMatchingSpaces = getAvailableMatchingSpaces(targetBand, selectedColor);
 
-      // Check if band is full and floor line is also full
-      const floorLineCapacity = 7; // Azul standard penalty row size
-      const currentFloorLine = humanBoard.brokenGlass || 0;
-      const canPlaceInBand = !targetBand.isRemoved && !targetBand.isCompleted && (targetBand.tiles.length < targetBand.maxCapacity);
-      const canPlaceInFloor = (currentFloorLine + overflowTiles.length) <= floorLineCapacity;
-
-      if (!canPlaceInBand && !canPlaceInFloor) {
-        setGameMessage('Cannot place tiles in this band or floor line. Choose another band or reset glazier.');
+      if (availableMatchingSpaces === 0 && hasReachableMatch) {
+        setGameMessage('This strip cannot take that color. Choose a reachable strip with matching spaces or jokers.');
         return;
       }
 
@@ -132,7 +125,7 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     try {
-      const aiAction = calculateAIMove(gameState, difficulty);
+      const aiAction = calculateAIMove(gameState);
       let newState;
 
       if (aiAction.type === 'reset') {
@@ -151,7 +144,7 @@ export const Game: React.FC<GameProps> = ({ difficulty = 'medium' }) => {
     }
 
     setIsProcessingAI(false);
-  }, [gameState, difficulty, isProcessingAI]);
+  }, [gameState, isProcessingAI]);
 
   // Check for round/game end
   useEffect(() => {

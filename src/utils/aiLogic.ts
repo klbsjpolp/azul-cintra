@@ -9,17 +9,16 @@ import type {
 import {
   getAccessibleBands,
   canBandAcceptTiles,
+  getAvailableMatchingSpaces,
   executeDraftAction,
   executeResetAction,
   calculateBandScore
 } from './gameLogic';
 
-// AI difficulty levels
-export type AIDifficulty = 'easy' | 'medium' | 'hard';
-
 // Evaluate a single draft option
 export const evaluateDraftOption = (gameState: GameState, action: DraftAction): number => {
   try {
+    const originalBand = gameState.aiBoard.patternBands.find(b => b.column === action.targetBand);
     const testState = executeDraftAction(gameState, action);
     const aiBoard = testState.aiBoard;
 
@@ -27,9 +26,11 @@ export const evaluateDraftOption = (gameState: GameState, action: DraftAction): 
 
     // Base scoring factors
     const targetBand = aiBoard.patternBands.find(b => b.column === action.targetBand);
-    if (targetBand) {
+    if (targetBand && originalBand) {
+      const didCompleteStrip = targetBand.windowTiles.length > originalBand.windowTiles.length;
+
       // Prefer completing bands
-      if (targetBand.tiles.length === targetBand.maxCapacity) {
+      if (didCompleteStrip) {
         const bandScore = calculateBandScore(aiBoard, action.targetBand, gameState.currentRoundTile);
         score += bandScore.total * 2; // Double weight for completing bands
       } else {
@@ -47,7 +48,8 @@ export const evaluateDraftOption = (gameState: GameState, action: DraftAction): 
     }
 
     // Penalty for excess tiles (broken glass)
-    const excessTiles = Math.max(0, action.tiles.length - (targetBand ? targetBand.maxCapacity - targetBand.tiles.length : 0));
+    const availableSpaces = originalBand ? getAvailableMatchingSpaces(originalBand, action.color) : 0;
+    const excessTiles = Math.max(0, action.tiles.length - availableSpaces);
     score -= excessTiles * 5;
 
     // Penalty for taking first player token from center
@@ -67,6 +69,7 @@ export const evaluateDraftOption = (gameState: GameState, action: DraftAction): 
 export const evaluateResetThenDraft = (gameState: GameState, action: DraftAction): number => {
   try {
     const resetState = executeResetAction(gameState);
+    resetState.currentPlayer = 'ai';
     const modifiedAction = {
       ...action,
       targetBand: resetState.aiBoard.glazierPosition
@@ -227,7 +230,7 @@ export const evaluateAllDraftOptions = (gameState: GameState): AIOption[] => {
 };
 
 // Calculate the best AI move based on difficulty
-export const calculateAIMove = (gameState: GameState, difficulty: AIDifficulty = 'medium'): GameAction => {
+export const calculateAIMove = (gameState: GameState): GameAction => {
   const options = evaluateAllDraftOptions(gameState);
 
   if (options.length === 0) {
@@ -237,29 +240,7 @@ export const calculateAIMove = (gameState: GameState, difficulty: AIDifficulty =
   // Sort options by score (descending)
   const sortedOptions = options.sort((a, b) => b.score - a.score);
 
-  let selectedOption: AIOption;
-
-  switch (difficulty) {
-    case 'easy':
-      // Easy AI: pick randomly from bottom 50% of options
-      { const bottomHalf = sortedOptions.slice(Math.floor(sortedOptions.length / 2));
-      selectedOption = bottomHalf[Math.floor(Math.random() * bottomHalf.length)] || sortedOptions[0];
-      break; }
-
-    case 'medium':
-      // Medium AI: pick from top 50% with some randomness
-      { const topHalf = sortedOptions.slice(0, Math.ceil(sortedOptions.length / 2));
-      selectedOption = topHalf[Math.floor(Math.random() * Math.min(3, topHalf.length))];
-      break; }
-
-    case 'hard':
-      // Hard AI: always pick the best option
-      selectedOption = sortedOptions[0];
-      break;
-
-    default:
-      selectedOption = sortedOptions[0];
-  }
+  const selectedOption = sortedOptions[0];
 
   // If the selected action needs a reset, perform reset first
   if (selectedOption.needsReset && selectedOption.action.type === 'draft') {
